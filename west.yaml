@@ -1,0 +1,6 @@
+manifest:
+  projects:
+    - name: tinyusb
+      url: https://github.com/hathach/tinyusb
+      revision: master # Or a specific tag like '0.15.0'
+      path: modules/lib/tinyusb

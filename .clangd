@@ -1,0 +1,8 @@
+CompileFlags:
+  # 1. Strip GCC-specific flags that Clang doesn't understand
+  Remove: 
+    - -fno-printf-return-value
+    - -mfp16-format=ieee
+    - -fno-reorder-functions
+    - -mno-unaligned-access    # Often shows up in nRF projects too
+    - -fno-ipa-cp              # Another common GCC-ism
