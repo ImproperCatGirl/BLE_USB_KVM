@@ -30,6 +30,7 @@
 #include <zephyr/settings/settings.h>
 
 #include "USB.h"
+#include "main.h"
 
 
 LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
@@ -71,13 +72,9 @@ static K_WORK_DEFINE(hids_ready_work, hids_on_ready);
 
 #define MAX_HID_DEVICES CONFIG_BT_MAX_CONN
 
-struct hid_instance {
-    struct bt_conn *conn;
-    struct bt_hogp hogp;
-    bool busy; // To track if this slot is active
-	struct k_work hids_ready_work; // Individual work item per device
-	bool subscribed;
-};
+
+
+int total_map_finished_dev = 0;
 
 static struct hid_instance devices[MAX_HID_DEVICES];
 
@@ -485,29 +482,77 @@ int map_size;
 static void map_cb(struct bt_hogp *hogp, uint8_t err,
                    const uint8_t *data, size_t size, size_t offset)
 {
+
     if (err) {
         printk("Map read failed (err %d)\n", err);
         return;
     }
 
+	int device_idx = -1;
+	for(int i = 0; i < MAX_HID_DEVICES; i++)
+	{
+		if(&devices[i].hogp == hogp)
+		{
+			device_idx = i;
+			break;
+		}
+	}
+	if(device_idx < 0)
+	{
+		printk("ERROR: DEVICE NOT FOUND\n");
+		return;
+	}
+
+
     // If size is 0 or data is NULL, the device has no more data to send
     if (size == 0 || data == NULL) {
         printk("Full Report Map received!\n");
 		//k_work_submit(&usb_init_work);
+		devices[device_idx].map_cplt = 1;
+		total_map_finished_dev ++;
+		struct bt_hogp_rep_info *rep = NULL;
+		if (devices[device_idx].subscribed) {
+			printk("Instance %p already subscribed, skipping.\n", devices[device_idx]);
+			return;
+		}
+		while (NULL != (rep = bt_hogp_rep_next(hogp, rep))) {
+			if (bt_hogp_rep_type(rep) == BT_HIDS_REPORT_TYPE_INPUT) {
+				printk("Subscribe to report id: %u for instance %p\n",
+					   bt_hogp_rep_id(rep), devices[device_idx]);
+				
+				err = bt_hogp_rep_subscribe(hogp, rep, hogp_notify_cb);
+				if (err) {
+					printk("Subscribe error (%d)\n", err);
+				}
+			}
+		}
+	
+		if (hogp->rep_boot.kbd_inp) {
+			printk("Subscribe to boot keyboard report\n");
+			err = bt_hogp_rep_subscribe(hogp, hogp->rep_boot.kbd_inp, hogp_boot_kbd_report);
+			if (err) { printk("Subscribe error (%d)\n", err); }
+		}
+	
+		if (hogp->rep_boot.mouse_inp) {
+			printk("Subscribe to boot mouse report\n");
+			err = bt_hogp_rep_subscribe(hogp, hogp->rep_boot.mouse_inp, hogp_boot_mouse_report);
+			if (err) { printk("Subscribe error (%d)\n", err); }
+		}
+		devices[device_idx].subscribed = true;
         return;
     }
 
     // Print the current chunk
     printk("Chunk at offset %d (size %d):\n", offset, size);
     for (int i = 0; i < size; i++) {
-        printk("%02X ", data[i]);
+		devices[device_idx].map[devices[device_idx].map_size ++]= data[i];
 		map[map_size ++] = data[i];
     }
     printk("\n");
 
     // TRIGGER THE NEXT CHUNK
     // We increment the offset and ask for the next part
-    int next_err = bt_hogp_map_read(hogp, map_cb, offset + size, K_NO_WAIT);
+    int next_err = bt_hogp_map_read(hogp, map_cb, offset + size, K_MSEC(100));
     if (next_err) {
         printk("Failed to request next chunk (err %d)\n", next_err);
     }
@@ -518,46 +563,16 @@ static void hids_on_ready(struct k_work *work)
     // Retrieve the specific instance this work belongs to
     struct hid_instance *inst = CONTAINER_OF(work, struct hid_instance, hids_ready_work);
     struct bt_hogp *hogp_ptr = &inst->hogp;
-    struct bt_hogp_rep_info *rep = NULL;
     int err;
 
     printk("HIDS instance %p is ready to work\n", inst);
-
-	if(hogp_ptr == NULL)	while(1);
     // Use hogp_ptr instead of the global hogp
 	err = bt_hogp_map_read(hogp_ptr, map_cb, 0, K_MSEC(100));
 
 	
     printk("HOGP Read MAP result = %d\n", err);
 
-	if (inst->subscribed) {
-        printk("Instance %p already subscribed, skipping.\n", inst);
-        return;
-    }
-    while (NULL != (rep = bt_hogp_rep_next(hogp_ptr, rep))) {
-        if (bt_hogp_rep_type(rep) == BT_HIDS_REPORT_TYPE_INPUT) {
-            printk("Subscribe to report id: %u for instance %p\n",
-                   bt_hogp_rep_id(rep), inst);
-            
-            err = bt_hogp_rep_subscribe(hogp_ptr, rep, hogp_notify_cb);
-            if (err) {
-                printk("Subscribe error (%d)\n", err);
-            }
-        }
-    }
-
-    if (hogp_ptr->rep_boot.kbd_inp) {
-        printk("Subscribe to boot keyboard report\n");
-        err = bt_hogp_rep_subscribe(hogp_ptr, hogp_ptr->rep_boot.kbd_inp, hogp_boot_kbd_report);
-        if (err) { printk("Subscribe error (%d)\n", err); }
-    }
-
-    if (hogp_ptr->rep_boot.mouse_inp) {
-        printk("Subscribe to boot mouse report\n");
-        err = bt_hogp_rep_subscribe(hogp_ptr, hogp_ptr->rep_boot.mouse_inp, hogp_boot_mouse_report);
-        if (err) { printk("Subscribe error (%d)\n", err); }
-    }
-	inst->subscribed = true;
+	
 }
 
 static void hogp_prep_fail_cb(struct bt_hogp *hogp, int err)
@@ -698,6 +713,10 @@ static struct bt_conn_auth_info_cb conn_auth_info_callbacks = {
 };
 
 
+void bt_ctlr_assert_handle(char *x, int len)
+{
+	printk("BT ERR!\n%s", x);
+}
 int main(void)
 {
 	int err;
@@ -748,5 +767,31 @@ int main(void)
 	}
 
 	printk("Scanning successfully started\n");
+
+
+	while(1)
+	{
+		k_msleep(1000);
+		if(total_map_finished_dev == 2)
+		{
+			for(int i = 0; i < MAX_HID_DEVICES; i++)
+			{
+				if(devices[i].map_cplt)
+				{
+					printk("MAP DEV %d:\n", i);
+					for(int j = 0; j < devices[i].map_size; j++)
+					{
+						printk("%02X ", devices[i].map[j]);
+						if(j%16 ==0)
+						{
+							printk("\n");
+						}
+					}
+					printk("\n");
+				}
+			}
+			break;
+		}
+	}
 	return 0;
 }
