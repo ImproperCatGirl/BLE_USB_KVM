@@ -14,7 +14,8 @@ static bool kb_ready;
 
 
 //struct usbd_context *sample_usbd;
-const struct device *hid_dev;
+const struct device *hid_dev0;
+const struct device *hid_dev1;
 
 #include <zephyr/usb/usbd.h>
 
@@ -75,6 +76,12 @@ int pre_init_usbd(void)
      * In the new stack, it is identified as "hid_0" 
      * The last parameter '1' is the configuration number. */
     err = usbd_register_class(&my_usbd_ctx, "hid_0", USBD_SPEED_FS, 1);
+    if (err) {
+        printk("Failed to register HID class\n");
+        return -1;
+    }
+
+	err = usbd_register_class(&my_usbd_ctx, "hid_1", USBD_SPEED_FS, 1);
     if (err) {
         printk("Failed to register HID class\n");
         return -1;
@@ -156,58 +163,81 @@ struct hid_device_ops kb_ops = {
 };
 
 
-extern uint8_t map[512];
-extern int map_size;
-
+extern uint8_t map[2][512];
+extern int map_size[2];
 
 
 extern bool usb_init_succ;
 /* Outside of your functions */
 void prep_usb_handler(struct k_work *work)
 {
-    printk("Starting USB Init from Workqueue...\n");
-    
-	int ret;
+    printk("Starting USB Init for Dual HID Devices...\n");
+    int ret;
 
-	hid_dev = DEVICE_DT_GET_ONE(zephyr_hid_device);
-	if (!device_is_ready(hid_dev)) {
-		printk("HID Device is not ready");
-		return;
-	}
+    /* 1. Get and verify Device 0 */
+    hid_dev0 = DEVICE_DT_GET(DT_NODELABEL(hid_dev_0));
+    if (!device_is_ready(hid_dev0)) {
+        printk("HID Device 0 is not ready\n");
+        return;
+    }
 
-	ret = hid_device_register(hid_dev,
-				  map, map_size,
-				  &kb_ops);
-	if (ret != 0) {
-		printk("Failed to register HID Device, %d", ret);
-		return;
-	}
+    /* 2. Get and verify Device 1 */
+    hid_dev1 = DEVICE_DT_GET(DT_NODELABEL(hid_dev_1));
+    if (!device_is_ready(hid_dev1)) {
+        printk("HID Device 1 is not ready\n");
+        return;
+    }
 
+    /* 3. Register Device 0 */
+    ret = hid_device_register(hid_dev0, map[0], map_size[0], &kb_ops);
+    if (ret != 0) {
+        printk("Failed to register HID Device 0, %d\n", ret);
+        return;
+    }
+
+    /* 4. Register Device 1 */
+    /* Note: Ensure map1/kb_ops1 are defined if they differ from device 0 */
+    ret = hid_device_register(hid_dev1, map[1], map_size[1], &kb_ops); 
+    if (ret != 0) {
+        printk("Failed to register HID Device 1, %d\n", ret);
+        return;
+    }
+
+    /* 5. Global USB Stack Init */
     pre_init_usbd();
 
-	int err = usbd_init(&my_usbd_ctx);
-	if (err) {
-		printk("Failed to initialize device support");
-		return;
-	}
+    int err = usbd_init(&my_usbd_ctx);
+    if (err) {
+        printk("Failed to initialize USB device support\n");
+        return;
+    }
 
-	ret = usbd_enable(&my_usbd_ctx);
-	if (ret) {
-		printk("Failed to enable device support");
-		return;
-	}
-	usb_init_succ = 1;
-    printk("USB Enabled!\n");
+    ret = usbd_enable(&my_usbd_ctx);
+    if (ret) {
+        printk("Failed to enable USB device support\n");
+        return;
+    }
+
+    usb_init_succ = 1;
+    printk("USB Dual HID Enabled!\n");
 }
 
 K_WORK_DEFINE(usb_init_work, prep_usb_handler);
 
-void USB_sub_report(int id, uint8_t *data, int size)
+void USB_sub_report(int dev_id, int report_id, uint8_t *data, int size)
 {
     if(kb_ready)
     {
-        usb_report_buffer[0] = 0x01;
+        usb_report_buffer[0] = report_id;
         memcpy(usb_report_buffer + 1, data, size);
-	    hid_device_submit_report(hid_dev, size + 1, usb_report_buffer);
+		if(dev_id == 0)
+		{
+			hid_device_submit_report(hid_dev0, size + 1, usb_report_buffer);
+		}
+		if(dev_id == 1)
+		{
+			hid_device_submit_report(hid_dev1, size + 1, usb_report_buffer);
+		}
+	    //hid_device_submit_report(hid_dev, size + 1, usb_report_buffer);
     }
 }

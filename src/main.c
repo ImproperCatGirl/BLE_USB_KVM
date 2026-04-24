@@ -30,6 +30,7 @@
 #include <zephyr/settings/settings.h>
 
 #include "USB.h"
+#include "zephyr/device.h"
 #include "main.h"
 
 
@@ -408,9 +409,18 @@ static uint8_t hogp_notify_cb(struct bt_hogp *hogp,
 	if (!data) {
 		return BT_GATT_ITER_STOP;
 	}
-	if(mod++ % 99 == 0)
+	int device_idx = -1;
+	for(int i = 0; i < MAX_HID_DEVICES; i++)
 	{
-		printk("Notification, id: %u, size: %u, data:",
+		if(&devices[i].hogp == hogp)
+		{
+			device_idx = i;
+			break;
+		}
+	}
+	if(mod++ % 29 == 0)
+	{
+		printk("Notification, device %d, id: %u, size: %u, data:",device_idx,
 			bt_hogp_rep_id(rep),
 			size);
 		for (i = 0; i < size; ++i) {
@@ -422,6 +432,7 @@ static uint8_t hogp_notify_cb(struct bt_hogp *hogp,
 	if(usb_init_succ)
 	{
 		//USB_sub_report(0, data, size);
+		USB_sub_report(device_idx, bt_hogp_rep_id(rep), data, size);
 	}
 	return BT_GATT_ITER_CONTINUE;
 }
@@ -475,8 +486,9 @@ static void hogp_ready_cb(struct bt_hogp *hogp)
     k_work_submit(&inst->hids_ready_work);
 }
 
-uint8_t map[512];
-int map_size;
+uint8_t map[2][512];
+int map_size[2];
+
 
 
 static void map_cb(struct bt_hogp *hogp, uint8_t err,
@@ -546,7 +558,6 @@ static void map_cb(struct bt_hogp *hogp, uint8_t err,
     printk("Chunk at offset %d (size %d):\n", offset, size);
     for (int i = 0; i < size; i++) {
 		devices[device_idx].map[devices[device_idx].map_size ++]= data[i];
-		map[map_size ++] = data[i];
     }
     printk("\n");
 
@@ -768,7 +779,7 @@ int main(void)
 
 	printk("Scanning successfully started\n");
 
-
+	bool usb_rdy = 0;
 	while(1)
 	{
 		k_msleep(1000);
@@ -782,13 +793,21 @@ int main(void)
 					for(int j = 0; j < devices[i].map_size; j++)
 					{
 						printk("%02X ", devices[i].map[j]);
+						map[i][j] = devices[i].map[j];
 						if(j%16 ==0)
 						{
 							printk("\n");
 						}
 					}
 					printk("\n");
+					map_size[i] = devices[i].map_size;
 				}
+			}
+
+			if(usb_rdy == 0)
+			{
+				usb_rdy = 1;
+				k_work_submit(&usb_init_work);
 			}
 			break;
 		}
