@@ -330,7 +330,6 @@ static void disconnected(struct bt_conn *conn, uint8_t reason)
             slot_cleared = true;
             devices[i].subscribed = false; // Reset here!
             break;
-            break; 
         }
     }
 
@@ -767,12 +766,13 @@ int main(void)
 
 	printk("Scanning successfully started\n");
 
-	bool usb_rdy = 0;
+	bool usb_first_init = 0;
+	int connected_dev_last = 0;
 	while(1)
 	{
-		k_msleep(1000);
-		if(total_map_finished_dev == 2)
+		if(total_map_finished_dev != connected_dev_last)
 		{
+			connected_dev_last = total_map_finished_dev;
 			for(int i = 0; i < MAX_HID_DEVICES; i++)
 			{
 				if(devices[i].map_cplt)
@@ -780,25 +780,23 @@ int main(void)
 					printk("MAP DEV %d:\n", i);
 					for(int j = 0; j < devices[i].map_size; j++)
 					{
-						printk("%02X ", devices[i].map[j]);
+						//printk("%02X ", devices[i].map[j]);
 						map[i][j] = devices[i].map[j];
 						if(j%16 ==0)
 						{
-							printk("\n");
+							//printk("\n");
 						}
 					}
-					printk("\n");
+					//printk("\n");
 					map_size[i] = devices[i].map_size;
 				}
 			}
 
-			if(usb_rdy == 0)
-			{
-				usb_rdy = 1;
-				k_work_submit(&usb_init_work);
-			}
-			break;
+			k_work_submit(&usb_init_work);
+			//break;
 		}
+		//if(total_map_finished_dev == 2)	break;
+		k_msleep(1000);
 	}
 	return 0;
 }

@@ -22,6 +22,8 @@ const struct device *hid_dev1;
 #define MY_VID 0x2FE3  // Zephyr testing VID
 #define MY_PID 0x0001  // Your custom PID
 
+int ver_num = 0;
+
 /* 1. Define String Descriptors (No sample Kconfig needed!) */
 USBD_DESC_LANG_DEFINE(my_lang);
 USBD_DESC_MANUFACTURER_DEFINE(my_mfr, "My KVM Project");
@@ -88,6 +90,34 @@ int pre_init_usbd(void)
     }
 
     return 0; // Ready for usbd_init()!
+}
+
+void teardown_usb(void)
+{
+    int ret;
+    /* 1. Stop the USB stack (stops traffic and pulls DP/DM lines) */
+
+	
+    ret = usbd_disable(&my_usbd_ctx);
+    if (ret) {
+        printk("Failed to disable USB\n");
+    }
+
+    /* 2. Uninitialize the stack (frees up stack resources) */
+    ret = usbd_shutdown(&my_usbd_ctx); 
+    if (ret) {
+        printk("Failed to shutdown USB\n");
+    }
+
+	ret = usbd_unregister_all_classes(&my_usbd_ctx, USBD_SPEED_FS, 1);
+	if(ret)
+	{
+		printk("USB unregister failed with %d\n", ret);
+	}
+
+    if (ret == 0) {
+        printk("USB HID fully de-initialized. Ready for reconfiguration.\n");
+    }
 }
 
 static void kb_iface_ready(const struct device *dev, const bool ready)
@@ -168,9 +198,16 @@ extern int map_size[2];
 
 
 extern bool usb_init_succ;
+
+bool first_init = 1;
 /* Outside of your functions */
 void prep_usb_handler(struct k_work *work)
 {
+	if(first_init != 1)
+	{
+		teardown_usb();
+	}
+	first_init = 0;
     printk("Starting USB Init for Dual HID Devices...\n");
     int ret;
 
@@ -187,13 +224,14 @@ void prep_usb_handler(struct k_work *work)
         printk("HID Device 1 is not ready\n");
         return;
     }
+	ret = hid_device_register(hid_dev0, map[0], map_size[0], &kb_ops);
+	if (ret != 0) {
+		printk("Failed to register HID Device 0, %d\n", ret);
+		return;
+	}
 
     /* 3. Register Device 0 */
-    ret = hid_device_register(hid_dev0, map[0], map_size[0], &kb_ops);
-    if (ret != 0) {
-        printk("Failed to register HID Device 0, %d\n", ret);
-        return;
-    }
+    
 
     /* 4. Register Device 1 */
     /* Note: Ensure map1/kb_ops1 are defined if they differ from device 0 */
@@ -206,6 +244,7 @@ void prep_usb_handler(struct k_work *work)
     /* 5. Global USB Stack Init */
     pre_init_usbd();
 
+	usbd_device_set_bcd_device(&my_usbd_ctx, ver_num ++);
     int err = usbd_init(&my_usbd_ctx);
     if (err) {
         printk("Failed to initialize USB device support\n");
