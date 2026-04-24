@@ -148,7 +148,7 @@ static void kb_output_report(const struct device *dev, const uint16_t len,
 void input_done(const struct device *dev,
     const uint8_t *const report)
 {
-    printk("input report done\n");
+    //printk("input report done\n");
 }
 
 struct hid_device_ops kb_ops = {

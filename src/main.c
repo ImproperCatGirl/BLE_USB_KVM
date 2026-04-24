@@ -377,7 +377,7 @@ static void scan_init(void)
 	struct bt_scan_init_param scan_init = {
 		.connect_if_match = 1,
 		.scan_param = NULL,
-		.conn_param = BT_LE_CONN_PARAM_DEFAULT
+		.conn_param = BT_LE_CONN_PARAM(6, 8, 0, 400)
 	};
 
 	bt_scan_init(&scan_init);
@@ -418,20 +418,8 @@ static uint8_t hogp_notify_cb(struct bt_hogp *hogp,
 			break;
 		}
 	}
-	if(mod++ % 29 == 0)
-	{
-		printk("Notification, device %d, id: %u, size: %u, data:",device_idx,
-			bt_hogp_rep_id(rep),
-			size);
-		for (i = 0; i < size; ++i) {
-			printk(" 0x%x", data[i]);
-		}
-		printk("\n");
-	}
-	
 	if(usb_init_succ)
 	{
-		//USB_sub_report(0, data, size);
 		USB_sub_report(device_idx, bt_hogp_rep_id(rep), data, size);
 	}
 	return BT_GATT_ITER_CONTINUE;
